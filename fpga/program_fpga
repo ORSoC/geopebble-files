@@ -1,0 +1,8 @@
+#!/bin/sh
+jtag << EOF
+cable USBblaster
+bsdl path .
+detect
+svf $1 stop progress
+quit
+EOF

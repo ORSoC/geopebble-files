@@ -1,0 +1,29 @@
+* Updating MCU
+  First, put MCU in programming mode by connecting the board and running:
+    sudo usb_modeswitch -v 09fb -p 6001 -H -V 2047 -P 0200
+  Because the MCU does not emulate the entirety of the Huawei mode switching hack,
+  usb_modeswitch will produce an error:
+    Error: Huawei control message failed (error -9). Abort
+  This is not actually a failure. You can confirm with lsusb that the "Altera Blaster"
+  device has been replaced by "Texas Instruments MSP430 USB HID Bootstrap Loader". 
+  That is the MSP430 in USB programming mode. 
+ 
+  Once the bootloader is running, the firmware can be replaced. A modified version of 
+  python-msp430-tools is used:
+    PYTHONPATH=python-msp430-tools python -m msp430.bsl5.hid -B -e -P ordb3a_firmware
+  Output:
+    Downloading utility routines...
+    Programming...
+    Programming: OK
+
+  The device now holds the new firmware. lsusb -vd 09fb:6001 will, for instance, show 
+  that the most recent firmware has a CDC serial port (which shows up as /dev/ttyACM0,
+  or another number if there are more CDC ports - TI MSP-FET430UIF has one). 
+
+  Note that the firmware is rather sensitive code. Since it is responsible for the 
+  critical tasks of adjusting voltages and communication, a firmware which fails to
+  start may turn an entire module unusable (until reawakened with a possibly modified 
+  bootstrap procedure). We intended to make unassisted boostrapping possible (via just
+  a USB cable) but it is not possible because of the 1.8V startup voltage. We worked 
+  around this using a separate bootstrap board driving MSP430 debug and power chip 
+  enable and control signals. 

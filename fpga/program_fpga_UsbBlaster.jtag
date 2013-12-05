@@ -1,0 +1,5 @@
+cable UsbBlaster
+bsdl path .
+detect
+svf ./orpsoc.svf stop progress
+quit
