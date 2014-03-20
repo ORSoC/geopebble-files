@@ -1,4 +1,4 @@
-#!/usr/bin/python3.0
+#!/usr/bin/python3
 
 # Copyright 2008, SoftPLC Corporation  http://softplc.com
 # Dick Hollenbeck dick@softplc.com
@@ -134,7 +134,7 @@ scanner = re.Scanner([
 # open the file using the given encoding
 try:
     file = open( sys.argv[1], encoding=file_encoding )
-except TypeError, e:
+except TypeError:
     file = open( sys.argv[1] )
 
 # read all svf file input into string "input"
