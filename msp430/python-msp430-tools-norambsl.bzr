@@ -1,0 +1,302 @@
+# Bazaar merge directive format 2 (Bazaar 0.90)
+# revision_id: yann@latmask.vernier.se-20121022123540-59d0v9p3u0f5cnyd
+# target_branch: http://bazaar.launchpad.net/~zsquareplusc/python-\
+#   msp430-tools/trunk/
+# testament_sha1: 3f78a4346ba50b4ca6662538771e9d9009b8035f
+# timestamp: 2012-10-22 15:10:14 +0200
+# base_revision_id: cliechti@gmx.net-20121005221227-k5vuqyfxyat6ku27
+# 
+# Begin patch
+=== modified file 'msp430/bsl5/bsl5.py'
+--- msp430/bsl5/bsl5.py	2011-02-19 17:30:29 +0000
++++ msp430/bsl5/bsl5.py	2012-10-22 12:35:40 +0000
+@@ -13,6 +13,7 @@
+ port access, USB HID).
+ """
+ 
++from optparse import OptionGroup
+ import struct
+ 
+ # commands for the MSP430 target
+@@ -156,6 +157,11 @@
+             data.pop()  # remove the additional byte w've added on upload
+         return data
+ 
++    def inflash(self, address):
++        # FIXME flash regions may differ on other chips, this is for msp430f5510
++        # (except BSL region, because writing there will obviously break without RAM BSL)
++        return 0x8000<=address<=0xffff or 0x1800<=address<=0x19ff
++
+     def memory_write(self, address, data):
+         """\
+         Write to memory. It creates multiple BSL_RX_DATA_BLOCK or
+@@ -163,9 +169,26 @@
+         the block size.
+         """
+         if self.buffer_size is None: raise BSL5Error('block size!?')
+-        if len(data) & 1:
+-            data += '\xff'
+-            #~ self.log.warn('memory_write: Odd length data not supported, padded with 0xff')
++        # This padding must relate to another BSL version limitation;
++        # the USB preloaded BSL (ROM based) only does byte mode.
++        # The public source flash writing code, however, only does 32-bit words.
++        #if len(data) & 1:
++        #    data += '\xff'
++        #    #~ self.log.warn('memory_write: Odd length data not supported, padded with 0xff')
++        if self.options.norambsl and self.inflash(address):
++            #print "flash write: %#04x %r"%(address, data)
++            if len(data)%4:    # pad data
++                data=data+'\xff'*(4-len(data)%4)
++            assert len(data)%4==0 and address%32==0
++            # Cannot rely on RAM-based BSL and need flash write routine
++            # Also cannot write across flash page boundaries (128 byte)
++            split_size=32
++            while data:
++                block, data = data[:split_size], data[split_size:]
++                self.BSL_RX_DATA_BLOCK_FAST(self.writeflash_args, struct.pack('<IH', address, len(block)/4) + block)
++                self.execute(self.writeflash_code)
++                self.read_report()   # execute does in fact return OK if executed code returns to BSL
++                address += len(block)
+         while data:
+             block, data = data[:self.buffer_size], data[self.buffer_size:]
+             if self.use_fast_mode:
+
+=== modified file 'msp430/bsl5/hid.py'
+--- msp430/bsl5/hid.py	2011-09-14 21:20:29 +0000
++++ msp430/bsl5/hid.py	2012-10-22 12:35:40 +0000
+@@ -194,6 +194,11 @@
+ 
+         group = OptionGroup(self.parser, "BSL settings")
+ 
++        group.add_option("-B", "--no-ram-bsl",
++                dest="norambsl",
++                help="disable use of RAM based BSL",
++                default=False)
++
+         group.add_option("--password",
+                 dest="password",
+                 action="store",
+@@ -234,27 +239,35 @@
+                 self.logger.info("Transmitting password: %s" % (password.encode('hex'),))
+                 self.BSL_RX_PASSWORD(password)
+ 
+-        # download full BSL
+-        if self.verbose:
+-            sys.stderr.write('Download full BSL...\n')
+-        bsl_version_expected = (0x00, 0x05, 0x04, 0x34)
+-        full_bsl_txt = pkgutil.get_data('msp430.bsl5', 'RAM_BSL.00.05.04.34.txt')
+-        full_bsl = msp430.memory.load('BSL', StringIO(full_bsl_txt), format='titext')
+-        self.program_file(full_bsl, quiet=True)
+-        self.BSL_LOAD_PC(0x2504)
+-
+-        # must re-initialize communication, BSL or USB system needs some time
+-        # to be ready
+-        self.logger.info("Waiting for BSL...")
+-        time.sleep(3)
+-        self.close()
+-        self.open(self.options.device)
+-        # checking version, this is also a connection check
+-        bsl_version = self.BSL_VERSION()
+-        if bsl_version_expected !=  bsl_version_expected:
+-            self.logger.error("BSL version mismatch (continuing anyway)")
++        if self.options.norambsl:
++            if self.verbose:
++                sys.stderr.write('Downloading utility routines...\n')
++            writeflash = pkgutil.get_data('msp430.bsl5', 'writeflash.bin')
++            self.writeflash_code=0x2500
++            self.writeflash_args=self.writeflash_code+len(writeflash)
++            self.memory_write(self.writeflash_code, writeflash)
+         else:
+-            self.logger.debug("BSL version OK")
++            # download full BSL
++            if self.verbose:
++                sys.stderr.write('Download full BSL...\n')
++            bsl_version_expected = (0x00, 0x05, 0x04, 0x34)
++            full_bsl_txt = pkgutil.get_data('msp430.bsl5', 'RAM_BSL.00.05.04.34.txt')
++            full_bsl = msp430.memory.load('BSL', StringIO(full_bsl_txt), format='titext')
++            self.program_file(full_bsl, quiet=True)
++            self.BSL_LOAD_PC(0x2504)
++
++            # must re-initialize communication, BSL or USB system needs some time
++            # to be ready
++            self.logger.info("Waiting for BSL...")
++            time.sleep(3)
++            self.close()
++            self.open(self.options.device)
++            # checking version, this is also a connection check
++            bsl_version = self.BSL_VERSION()
++            if bsl_version_expected !=  bsl_version_expected:
++                self.logger.error("BSL version mismatch (continuing anyway)")
++            else:
++                self.logger.debug("BSL version OK")
+ 
+         #~ # Switch back to mode where we get ACKs
+         #~ self.use_fast_mode = False
+
+=== added file 'msp430/bsl5/writeflash.S'
+--- msp430/bsl5/writeflash.S	1970-01-01 00:00:00 +0000
++++ msp430/bsl5/writeflash.S	2012-10-22 12:35:40 +0000
+@@ -0,0 +1,93 @@
++/*
++Flash write routine for MSP430, used as a callable subroutine from BSL5
++
++Usage: load into RAM, place address to write (32-bit) and doublewords to write (16-bit)
++directly after, followed by data to be written. Call. It does not return any data, but 
++since it returns to BSL there will be an OK message from the LOAD_PC call. This routine
++also does not check for page boundaries, so run only with appropriate chunks. 
++
++Makefile:
++CC=msp430-gcc
++ASFLAGS=-mmcu=msp430f5510
++
++.PHONY: all
++
++all: writeflash.bin
++
++%.bin: %.o
++	msp430-objcopy -O binary $< $@
++*/
++
++#include <msp430.h>
++
++#define DO_FLASH 1
++#define DEBUG 0
++	
++writeflash:
++	mov	#(WDTPW | WDTHOLD), &WDTCTL ; stop watchdog
++	dint				    ; disable interrupts
++
++	;; Enable access to flash (disable interrupts)
++	mov	#0, &SFRIE1
++
++	mova	r0, r14
++_pic0:	adda	#(datasrc-_pic0), r14 ; beginning of input data block (also read data ptr)
++	mova	@r14+, r15		   ; write address
++	mov	@r14+, r13		   ; 32-bit words to write
++
++#if DO_FLASH
++	;; wait until flash controller is ready
++_wait_init:
++	bit	#BUSY, &FCTL3
++	jnz	_wait_init
++
++	mov	#FWPW, &FCTL3	; unlock flash
++	mov	#(FWPW | BLKWRT | WRT), &FCTL1 ; start a block write
++#endif
++_write_loop:
++	;; transfer 4 bytes from RAM to flash
++	mov.w	@r14+, 0(r15)
++	mov.w	@r14+, 2(r15)
++
++	;; wait until flash controller is ready for the next word
++#if DO_FLASH
++_wait_loop:
++	bit	#WAIT, &FCTL3
++	jz	_wait_loop
++#endif
++
++	adda	#4, r15
++	;; check if done
++	dec	r13
++	jnz	_write_loop
++
++#if DO_FLASH
++	;; finish block write
++	mov	#FWPW, &FCTL1
++
++_wait_finish:	
++	bit	#BUSY, &FCTL3
++	jnz	_wait_finish
++
++	mov	#(FWPW | LOCK), &FCTL3	; lock flash
++#endif
++
++#if DEBUG
++;;; debugging code
++	mova	r14, &0x1c84
++	mova	r15, &0x1c88
++	mov	r13, &0x1c8c
++	
++	mov	#0x40, &(0x1c00+0x07ca);USBIEPCTX_1 ; send report
++#endif
++
++;;; finish
++ret_to_bsl:
++	mov	#2,	r12
++	mov	#0xdead, r13
++	mov	#0xbeef, r14
++	calla	#0x01002
++datasrc:
++	;; address: write destination, 32-bit doubleword
++	;; count: number of 32-bit words to write (>=1), 16-bit word
++	;; data to write to flash, count doublewords
+
+=== added file 'msp430/bsl5/writeflash.bin'
+Binary files msp430/bsl5/writeflash.bin	1970-01-01 00:00:00 +0000 and msp430/bsl5/writeflash.bin	2012-10-22 12:35:40 +0000 differ
+# Begin bundle
+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
