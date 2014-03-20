@@ -45,7 +45,7 @@ class UsbConn:
                 if alt.interfaceNumber==iface:
                     for ep in alt.endpoints:
                         inp=ep.address&0x80
-                        epno=ep.address&0x7f
+                        epno=ep.address #&0x7f
                         if inp:
                             self.inep=epno
                         else:
