@@ -47,6 +47,7 @@ if file "$system" | grep -s ELF; then
 	fi
 fi
 
+./program_fpga stop.svf
 ./nand.py write $xsvf
 ./nand.py write $system 32 len
 
