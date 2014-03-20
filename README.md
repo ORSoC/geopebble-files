@@ -3,8 +3,8 @@ geopebble-files
 
 Files for geopebble project
 
-fpga/		FPGA image + jtag scripts
+fpga/		FPGA firmware image & tools
 
-msp430/		MSP430 firmware
+msp430/		MSP430 firmware image & tools
 
 vmlinux		Demo Linux image

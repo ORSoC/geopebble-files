@@ -1,0 +1,55 @@
+#!/bin/sh -e
+PATH="${PATH}:/opt/openrisc/bin"
+
+trap error ERR
+
+if [ $# != 2 ]; then
+	echo "Usage: $0 fpga_image.svf/.xsvf system_image"
+	exit 1
+fi
+
+error() {
+	echo ; echo ; echo
+	echo "NAND programming FAILED!"
+	echo
+	exit 1
+}
+
+xsvf="$1"
+system="$2"
+
+if [ ! -f "$xsvf" ]; then
+	echo "ERROR: $xsvf not found"
+	exit 1
+fi
+
+if [ ! -f "$system" ]; then
+	echo "ERROR: $system not found"
+	exit 1
+fi
+
+case "$xsvf" in
+*.svf)
+	svf="$xsvf"
+	xsvf="${xsvf%%.svf}.xsvf"
+	if [ ! -s "$xsvf" ] || [ "$svf" -nt "$xsvf" ]; then
+		echo "Coverting $svf to XSVF. Please wait a bit.."
+		./svf2xsvf.py "$svf" "$xsvf" || ( rm -f "$xsvf" && false )
+	fi
+esac
+
+if file "$system" | grep -s ELF; then
+	elf=$system
+	system=${elf}.bin
+	if [ ! -s "$system" ] || [ "$elf" -nt "$system" ]; then
+		echo "Coverting $elf to binary"
+		or32-elf-objcopy -O binary -R .note -R .comment -S "$elf" "$system" || ( rm -f "$system" && false )
+	fi
+fi
+
+./nand.py write $xsvf
+./nand.py write $system 32 len
+
+echo; echo; echo
+echo "NAND programmed successfully!"
+echo
